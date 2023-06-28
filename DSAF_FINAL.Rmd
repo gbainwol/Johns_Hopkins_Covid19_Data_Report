@@ -1,0 +1,315 @@
+---
+title: "DSAF_FINAL"
+author: "Garrett Bainwol"
+date: "2023-06-23"
+output:
+  html_document: 
+    warnings: FALSE
+  pdf_document: default
+always_allow_html: true
+---
+
+In this document we will be using Covid 19 data taken from Johns Hopkins Github Repository. The data sets included is either United States or Global Specific. It included case numbers, deaths, and amount of people recovered.
+
+NOTE: due to complexity of visualizations this rmd can only be knitted to HTML. Please knit to HTML.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries and file importing}
+
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(dplyr)
+library(leaflet)
+library(plotly)
+
+base_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names <- c("time_series_covid19_confirmed_US.csv",
+                "time_series_covid19_confirmed_global.csv",
+                "time_series_covid19_deaths_US.csv",
+                "time_series_covid19_deaths_global.csv",
+                "time_series_covid19_recovered_global.csv")
+urls <- str_c(base_url, file_names)
+
+us_cases <- read_csv(urls[1])
+global_cases <- read_csv(urls[2])
+us_deaths <- read_csv(urls[3])
+global_deaths <- read_csv(urls[4])
+recovered <- read_csv(urls[5])
+
+
+```
+
+```{r tidy,clean, and merging data sets}
+
+
+global_cases <- global_cases %>%
+  pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long),
+               names_to = "date",
+               values_to = "cases")%>%
+  select(-`Province/State`)
+
+global_cases$date <- as.Date(global_cases$date, format = "%m/%d/%y")
+
+global_cases
+
+
+
+global_deaths<-global_deaths%>%
+    pivot_longer(cols =-c( `Province/State`,`Country/Region`,Lat,Long),
+                 names_to = "date",
+                 values_to = "deaths")%>%
+  select(-`Province/State`)
+
+global_deaths$date <- as.Date(global_deaths$date, format = "%m/%d/%y")
+
+
+global_deaths
+
+recovered <- recovered %>%
+  pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long),
+               names_to = "date",
+               values_to = "recovered")%>%
+  select(-`Province/State`)
+
+recovered$date <- as.Date(recovered$date, format = "%m/%d/%y")
+
+recovered
+
+us_deaths <- us_deaths %>%
+  pivot_longer(cols = -c(UID, iso2, iso3, code3, FIPS, Admin2,
+                         Province_State, Country_Region, Lat,
+                         Long_, Combined_Key, Population),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(-c(UID, iso2, iso3, code3, Combined_Key, Country_Region, FIPS))
+
+us_deaths$date <- as.Date(us_deaths$date, format = "%m/%d/%y")
+
+us_deaths
+
+
+
+us_cases<- us_cases%>%
+  pivot_longer(cols=-c(UID,iso2,iso3,code3,FIPS,Admin2,
+                       Province_State, Country_Region,Lat,
+                       Long_, Combined_Key),
+               names_to = "date",
+               values_to = "cases")%>%                                                          select(-c(UID,iso2,iso3,code3,Combined_Key,Country_Region,FIPS))
+
+us_cases$date <- as.Date(us_cases$date, format = "%m/%d/%y")
+
+us_cases
+
+#Merge the global data sets
+
+global <- full_join(global_cases, global_deaths, by = c("Country/Region", "Lat", "Long", "date"))
+
+global <- full_join(global, recovered, by = c("Country/Region", "Lat", "Long", "date"))
+
+
+
+global
+
+#merge the us_deaths and us_cases data frame and further clean them
+
+US <- full_join(us_deaths, us_cases, by = c("Admin2", "Province_State", "Lat", "Long_", "date"),relationship= "many-to-many")
+
+US <- US %>% rename(`City/Town/County` = Admin2, State = Province_State, Long= Long_)
+
+US
+```
+
+```{r understanding the data}
+summary(global)
+
+
+```
+
+```{r understanding the data part 2}
+summary(US)
+
+
+```
+
+I now have two clean data sets and I can move forward with some data exploration and analysis.
+
+After digging around I found either reporting errors or simply faulty data. Either data set is incomplete in areas and some countries have some obvious under reporting.
+
+How can a town have more than double the number of cases relative to the population of the town? This may be faulty data. There was entries with more deaths than population as well. Could there be a hospital in these areas? Why would there be more deaths than the local population? I again am curious with the data we are working with and looking at.
+
+#  QUESTION(S) OF INTEREST 
+
+## What areas were impacted the hardest by Covid-19?
+
+## How did Covid-19 change over time?
+
+## Can we use this data to predict future Covid-19 cases? 
+
+```{r data exploration}
+
+global2 <- global %>%
+  filter(date == "2023-03-09") %>%
+  group_by(`Country/Region`) %>%
+  summarise(
+    cases = sum(cases),
+    deaths = sum(deaths)
+  )
+
+#find out which countries have incomplete data note them to consider bias and remove them
+na_rows <- global2 %>%
+  filter(is.na(cases) | is.na(deaths))
+
+global2 <- global2 %>%
+  filter(!is.na(cases) & !is.na(deaths))
+global2 <- global2 %>%
+  filter(!grepl("olympics", `Country/Region`))
+#figure out if data is reliable
+potential_bias <- global2 %>%
+  mutate(deaths = as.numeric(deaths),
+         cases = as.numeric(cases)) %>%
+  filter(deaths > cases)
+na_rows
+global2
+potential_bias
+
+ sorted_cases <- global2[order(-global2$cases), ]
+ 
+ top_25_cases <- head(sorted_cases, 25)[, c("Country/Region", "cases")]
+ 
+ sorted_deaths <- global2[order(-global2$deaths), ]
+ 
+ top_25_deaths <- head(sorted_deaths, 25)[, c("Country/Region", "deaths")]
+ 
+ top_25_cases
+ top_25_deaths
+
+```
+
+I made the data set potential bias to note bias in a country's reporting it seems that North Korea may be falsifying or fudging their numbers because they have 1 case reported meanwhile 6 people have died from Covid. All 6 of those people should have been a reported case. In my analysis I found out that the Olympics were included as a Country/Region so I removed those. Many countries had negative values for recovered or didn't report at all so I will remove that column from my analysis going forward.\
+\
+I want to show where Covid hit the United States by case number/deaths, I think a good way to do this would be to create a heat map of the total cases and deaths as reported on 03-09-2023 because that will give me an accumulative value for each. 03-09-2023 is the late recorded date in the data set.\
+\
+
+# DATA VISUALIZATIONS
+
+### HEATMAPS FOR US DEATHS AND CASES
+
+NOTE: PLEASE USE ZOOM AND THE GRAB FUNCTION ON YOUR MOUSE FOR APPROPRIATE VIEWING OF HEATMAPS THEY DO NOT DISPLAY PROPERLY WHEN KNITTED TO HTML
+
+```{r code for Heatmaps}
+#Create dataset for stats reported by 03/09/2023
+US2 <- US %>%
+     filter(date == "2023-03-09")
+US2<- US2%>%
+     select(-date)
+#create map
+library(leaflet)
+
+pal_deaths <- colorNumeric(palette = "viridis", domain = US2$deaths)
+
+leaflet(US2) %>%
+  addTiles() %>%
+  addCircleMarkers(~Long, ~Lat, color = ~pal_deaths(deaths), 
+                   radius = ~sqrt(deaths)/10, fillOpacity = 0.3, stroke = FALSE, 
+                   label = ~paste(`City/Town/County`, deaths, "deaths"))
+
+# Define color palette for cases
+pal_cases <- colorNumeric(palette = "viridis", domain = US2$cases)
+
+leaflet(US2) %>%
+  addTiles() %>%
+  addCircleMarkers(~Long, ~Lat, color = ~pal_cases(cases), 
+                   radius = ~sqrt(cases)/10, fillOpacity = 0.3, stroke = FALSE, 
+                   label = ~paste(`City/Town/County`, cases, "cases"))
+
+
+```
+
+## LINE GRAPHS TO SHOW COVID CASES/DEATHS OVER TIME
+
+```{r Line Graphs, warning=FALSE}
+suppressWarnings({
+#^code so warning doesn't display to document 
+  
+top_25_countries_cases <- c("US", "India", "France", "Germany", "Brazil", "Japan", "Korea, South",
+                            "Italy", "United Kingdom", "Russia", "Turkey", "Spain", "Vietnam",
+                            "Australia", "Argentina", "Taiwan*", "Netherlands", "Iran",
+                            "Mexico", "Indonesia", "Poland", "Colombia", "Austria", "Ukraine", "Portugal")
+
+# Filter global data 
+global_filtered_cases <- global %>%
+  filter(`Country/Region` %in% top_25_countries_cases)
+
+# plot for cases
+plot_cases <- global_filtered_cases %>%
+  plot_ly(x = ~date, y = ~cases, color = ~`Country/Region`, type = 'scatter', mode = 'lines') %>%
+  layout(title = "COVID-19 Cases Over Time for Top 25 Countries",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "Cases"))
+
+plot_cases
+
+
+# top 25 countries by deaths
+top_25_countries_deaths <- c("US", "Brazil", "India", "Russia", "Mexico", "United Kingdom", "Peru",
+                             "Italy", "Germany", "France", "Indonesia", "Iran", "Colombia",
+                             "Argentina", "Spain", "Ukraine", "Poland", "South Africa",
+                             "Turkey", "Japan", "Romania", "Philippines", "Chile", "Hungary", "Vietnam")
+
+# Filter global data for top 25
+global_filtered_deaths <- global %>%
+  filter(`Country/Region` %in% top_25_countries_deaths)
+
+# create deaths plot
+plot_deaths <- global_filtered_deaths %>%
+  plot_ly(x = ~date, y = ~deaths, color = ~`Country/Region`, type = 'scatter', mode = 'lines') %>%
+  layout(title = "COVID-19 Deaths Over Time for Top 25 Countries",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "Deaths"))
+
+})
+#plot
+plot_deaths
+plot_cases
+
+```
+
+## I would like to model cases with time series forecasting using a ARIMA model
+
+I can try to predict future case numbers going forward.
+
+# ARIMA MODEL
+
+```{r Model}
+
+# Load the necessary libraries
+library(zoo)
+library(forecast)
+
+# Convert global2 dataframe to a time series object
+ts_cases <- ts(global2$cases)
+
+# Fit an ARIMA model to the time series data
+arima_model <- auto.arima(ts_cases)
+
+# Forecast future values
+forecast_cases <- forecast(arima_model, h = 30)  # Example: Forecasting 30 days ahead
+
+# Print the forecasted values
+print(forecast_cases)
+
+
+
+```
+
+#### The model predicts a constant forecast value of 3,401,711 cases over the next 30 days. The confidence intervals are wider than I would like but that seems like a reasonable number as a number. I could fine tune the model but it seems fairly in line with the end of the line chart we produced.I would have liked to have not seen a constant value but it is a basic ARIMA model.
+
+# Conclusion
+
+I would like to say I enjoyed working with this data. It was messy and perhaps has it shortfalls. It was interesting to see in some places there were more than double the amount of cases relative to a place's population. North Korea also had more deaths than cases. There are potential biases in the data itself and in the way I cleaned and modeled it. I cut out row values that were blank in some columns. I removed the Olympics in the Country columns and the rows with NA values. I was fitting the data to my analysis.I wish it was daily cases rather than the accumulative amount of cases. Countries under-reporting or fabricating numbers may have introduced bias. Either way we were able to see that Covid-19 has relatively slowed down if you look at the line graphs. It has it's period of exponential growth but it tends to level off after those periods of growth. one would be lead to assume that herd immunity was coming into play but that's a inference to be tested on another day. I hope you enjoyed the report, thank you for reading.
+
+# 
